@@ -1,36 +1,113 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AgentOS — Multi-Tenant AI Agent Platform
 
-## Getting Started
+Enterprise-grade, multi-tenant Agent-as-a-Service platform built with Next.js 15, Prisma v7, Tailwind CSS v4, and the Vercel AI SDK.
 
-First, run the development server:
+## Architecture
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+src/
+├── agent/tools/dynamicRouter.ts      # Runtime tool dispatch (webhooks + sandboxes)
+├── app/
+│   ├── (auth)/login|register/        # Authentication pages
+│   ├── admin/                        # Super admin console
+│   ├── api/
+│   │   ├── auth/                     # Login, register, logout
+│   │   ├── dashboard/[tenantId]/     # Tenant management APIs
+│   │   ├── v1/[tenantId]/chat/       # Authenticated agent chat
+│   │   └── widget/chat/              # Embeddable widget endpoint
+│   └── dashboard/[tenantId]/         # Tenant dashboard pages
+│       ├── agents/                   # Agent management + embed console
+│       ├── billing/                  # Stripe usage & billing
+│       ├── compliance/               # HIPAA/GDPR/PCI guardrails
+│       ├── settings/                 # Models & CORS whitelist
+│       └── tools/                    # Dynamic code tool builder
+├── lib/
+│   ├── auth.ts                       # JWT sessions + RBAC
+│   ├── billing/stripe.ts             # Stripe metered billing
+│   ├── compliance/piiScrubber.ts     # Regex + NER PII masking
+│   ├── db/prisma.ts                  # Prisma v7 with pg adapter
+│   └── sandbox/sandboxExecutor.ts   # Vercel Sandbox MicroVM runner
+└── middleware/widgetCors.ts          # DB-backed CORS verification
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Super Admin Login
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Field    | Value                    |
+|----------|--------------------------|
+| Email    | `superadmin@agentos.io`  |
+| Password | `SuperAdmin@2024!`       |
+| URL      | `/login` → `/admin`      |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Demo Tenant Login
 
-## Learn More
+| Field    | Value                    |
+|----------|--------------------------|
+| Email    | `admin@acme-corp.com`    |
+| Password | `Demo@Admin2024!`        |
+| URL      | `/login` → `/dashboard/{tenantId}` |
 
-To learn more about Next.js, take a look at the following resources:
+## Vercel Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 1. Create a PostgreSQL Database
+Use Vercel Postgres, Neon, Supabase, or Railway. Get the connection string.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2. Set Environment Variables in Vercel Dashboard
 
-## Deploy on Vercel
+```
+DATABASE_URL=postgresql://...
+JWT_SECRET=your-min-32-char-secret
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PUBLISHABLE_KEY=pk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+NEXT_PUBLIC_APP_URL=https://your-domain.vercel.app
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 3. Deploy
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+vercel --prod
+```
+
+Or connect the GitHub repo in the Vercel dashboard with these build settings:
+- **Build Command:** `npx prisma generate && npm run build`
+- **Output Directory:** `.next`
+
+### 4. Run Database Migration
+
+After deployment, run migrations:
+```bash
+npx prisma db push
+npx prisma db seed
+```
+
+## Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Generate Prisma client
+npx prisma generate
+
+# Push schema to DB (development)
+npx prisma db push
+
+# Seed with superadmin + demo data
+npm run db:seed
+
+# Start development server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+## Key Features
+
+- **Runtime Configuration** — Agents, prompts, LLM configs, and tools defined in the database
+- **PII Scrubbing** — Pre-flight and post-flight compliance scanning (HIPAA, GDPR, PCI)
+- **Sandbox Execution** — Node.js and Python tool execution in isolated MicroVMs
+- **Stripe Billing** — Per-token and per-tool-call metered billing via Usage Records API
+- **CORS Security** — Database-backed domain whitelisting for embedded widgets
+- **Multi-Model** — OpenAI, Anthropic, DeepSeek, Groq with configurable fallback ordering
+- **Audit Logging** — OpenTelemetry-compatible event log with scrubbed content
+- **Role-Based Access** — SUPERADMIN, TENANT_ADMIN, TENANT_MEMBER, VIEWER roles
