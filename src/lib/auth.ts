@@ -1,10 +1,11 @@
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import prisma from "@/lib/db/prisma";
 import { UserRole } from "@prisma/client";
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret-change-in-prod";
+const JWT_SECRET_RAW = process.env.JWT_SECRET ?? "agentos-jwt-secret-enterprise-platform-2024-secure";
+const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_RAW);
 const COOKIE_NAME = "agent_session";
 const SESSION_TTL_DAYS = 7;
 
@@ -19,25 +20,23 @@ export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
 }
 
-export async function verifyPassword(
-  plain: string,
-  hash: string
-): Promise<boolean> {
+export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
   return bcrypt.compare(plain, hash);
 }
 
-export function signToken(payload: SessionPayload): string {
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: `${SESSION_TTL_DAYS}d`,
-    issuer: "agent-platform",
-  });
+export async function signToken(payload: SessionPayload): Promise<string> {
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer("agent-platform")
+    .setIssuedAt()
+    .setExpirationTime(`${SESSION_TTL_DAYS}d`)
+    .sign(JWT_SECRET);
 }
 
-export function verifyToken(token: string): SessionPayload | null {
+export async function verifyToken(token: string): Promise<SessionPayload | null> {
   try {
-    return jwt.verify(token, JWT_SECRET, {
-      issuer: "agent-platform",
-    }) as SessionPayload;
+    const { payload } = await jwtVerify(token, JWT_SECRET, { issuer: "agent-platform" });
+    return payload as unknown as SessionPayload;
   } catch {
     return null;
   }
@@ -58,13 +57,11 @@ export async function createSession(userId: string): Promise<string> {
     tenantId: user.tenantId,
   };
 
-  const token = signToken(payload);
+  const token = await signToken(payload);
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + SESSION_TTL_DAYS);
 
-  await prisma.authSession.create({
-    data: { userId, token, expiresAt },
-  });
+  await prisma.authSession.create({ data: { userId, token, expiresAt } });
 
   return token;
 }
@@ -74,28 +71,23 @@ export async function getSession(): Promise<SessionPayload | null> {
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
 
-  const payload = verifyToken(token);
+  const payload = await verifyToken(token);
   if (!payload) return null;
 
-  const dbSession = await prisma.authSession.findUnique({
-    where: { token },
-  });
-
+  const dbSession = await prisma.authSession.findUnique({ where: { token } });
   if (!dbSession || dbSession.expiresAt < new Date()) return null;
 
   return payload;
 }
 
-export function setSessionCookie(token: string, response?: Response): void {
+export function setSessionCookie(token: string, response: Response): void {
   const maxAge = SESSION_TTL_DAYS * 24 * 60 * 60;
-  if (response) {
-    response.headers.set(
-      "Set-Cookie",
-      `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; ${
-        process.env.NODE_ENV === "production" ? "Secure;" : ""
-      }`
-    );
-  }
+  response.headers.set(
+    "Set-Cookie",
+    `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${
+      process.env.NODE_ENV === "production" ? "; Secure" : ""
+    }`
+  );
 }
 
 export function clearSessionCookie(): string {
@@ -104,32 +96,19 @@ export function clearSessionCookie(): string {
 
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
+  if (!session) throw new Error("Unauthorized");
   return session;
 }
 
-export async function requireRole(
-  allowedRoles: UserRole[]
-): Promise<SessionPayload> {
+export async function requireRole(allowedRoles: UserRole[]): Promise<SessionPayload> {
   const session = await requireSession();
-  if (!allowedRoles.includes(session.role)) {
-    throw new Error("Forbidden: insufficient permissions");
-  }
+  if (!allowedRoles.includes(session.role)) throw new Error("Forbidden");
   return session;
 }
 
-export async function requireTenantAccess(
-  tenantId: string
-): Promise<SessionPayload> {
+export async function requireTenantAccess(tenantId: string): Promise<SessionPayload> {
   const session = await requireSession();
-
   if (session.role === UserRole.SUPERADMIN) return session;
-
-  if (session.tenantId !== tenantId) {
-    throw new Error("Forbidden: no access to this tenant workspace");
-  }
-
+  if (session.tenantId !== tenantId) throw new Error("Forbidden: no access to this tenant");
   return session;
 }

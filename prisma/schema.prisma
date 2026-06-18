@@ -85,6 +85,7 @@ model User {
 
   sessions       AuthSession[]
   apiKeys        ApiKey[]
+  oauthAccounts  OAuthAccount[]
 
   @@index([email])
   @@index([tenantId])
@@ -325,4 +326,40 @@ model UsageRecord {
 
   @@index([tenantId, createdAt])
   @@index([tenantId, billingPeriodStart])
+}
+
+// ─── OAuth / Social Login ─────────────────────────────────────────────────────
+
+enum OAuthProviderType {
+  GOOGLE
+  GITHUB
+  MICROSOFT
+  SLACK
+}
+
+model OAuthProviderConfig {
+  id            String            @id @default(cuid())
+  provider      OAuthProviderType @unique
+  clientId      String
+  clientSecret  String
+  enabled       Boolean           @default(false)
+  scopes        String[]          @default([])
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model OAuthAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  accessToken       String?  @db.Text
+  refreshToken      String?  @db.Text
+  expiresAt         DateTime?
+  createdAt         DateTime @default(now())
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }

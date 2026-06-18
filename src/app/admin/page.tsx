@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatTokens } from "@/lib/utils";
-import { Building2, Users, Bot, CreditCard, Shield } from "lucide-react";
+import { Building2, Users, Bot, CreditCard, Shield, KeyRound } from "lucide-react";
 
 export default async function SuperAdminPage() {
   const session = await getSession();
@@ -36,10 +36,18 @@ export default async function SuperAdminPage() {
             <h1 className="text-2xl font-bold">Super Admin Console</h1>
             <p className="text-muted-foreground">Platform-wide management and oversight</p>
           </div>
-          <Badge variant="destructive" className="text-sm">
-            <Shield className="mr-1 h-3 w-3" />
-            SUPERADMIN
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Link href="/admin/oauth-providers">
+              <Button variant="outline" size="sm">
+                <KeyRound className="mr-1 h-4 w-4" />
+                OAuth Providers
+              </Button>
+            </Link>
+            <Badge variant="destructive" className="text-sm">
+              <Shield className="mr-1 h-3 w-3" />
+              SUPERADMIN
+            </Badge>
+          </div>
         </div>
 
         {/* Stats */}
