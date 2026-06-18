@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum BillingPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum LLMProvider {
+  OPENAI
+  ANTHROPIC
+  DEEPSEEK
+  GOOGLE
+  MISTRAL
+  GROQ
+}
+
+enum AgentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ToolExecutionType {
+  REST_WEBHOOK
+  SANDBOX_NODE
+  SANDBOX_PYTHON
+  BUILTIN
+}
+
+enum MaskingStrategy {
+  ANONYMIZE
+  REDACT
+  TOKENIZE
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  TIMEOUT
+}
+
+enum EventType {
+  USER_MESSAGE
+  AGENT_RESPONSE
+  TOOL_CALL
+  TOOL_RESULT
+  COMPLIANCE_SCAN
+  ERROR
+  BILLING_RECORD
+}
+
+enum UserRole {
+  SUPERADMIN
+  TENANT_ADMIN
+  TENANT_MEMBER
+  VIEWER
+}
+
+// ─── Core Entities ────────────────────────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String?
+  passwordHash   String
+  role           UserRole  @default(TENANT_MEMBER)
+  emailVerified  DateTime?
+  image          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenantId       String?
+  tenant         Tenant?   @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  sessions       AuthSession[]
+  apiKeys        ApiKey[]
+
+  @@index([email])
+  @@index([tenantId])
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  userId      String
+  tenantId    String
+  keyHash     String    @unique
+  keyPrefix   String
+  name        String
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([keyHash])
+}
+
+// ─── Tenant ────────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id                    String      @id @default(cuid())
+  name                  String
+  slug                  String      @unique
+  logoUrl               String?
+  billingPlan           BillingPlan @default(FREE)
+  stripeCustomerId      String?     @unique
+  stripeSubscriptionId  String?
+  monthlyTokenQuota     BigInt      @default(1000000)
+  monthlyTokenUsed      BigInt      @default(0)
+  monthlyToolCallQuota  Int         @default(1000)
+  monthlyToolCallUsed   Int         @default(0)
+  billingCycleStart     DateTime    @default(now())
+  isActive              Boolean     @default(true)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  whitelistedDomains    WhitelistedDomain[]
+  llmConfigs            TenantLLMConfig[]
+  agents                Agent[]
+  toolRegistry          ToolRegistry[]
+  complianceProfile     ComplianceProfile?
+  agentSessions         AgentSession[]
+  users                 User[]
+  apiKeys               ApiKey[]
+  usageRecords          UsageRecord[]
+
+  @@index([slug])
+  @@index([stripeCustomerId])
+}
+
+model WhitelistedDomain {
+  id        String   @id @default(cuid())
+  tenantId  String
+  domain    String
+  createdAt DateTime @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, domain])
+  @@index([tenantId])
+}
+
+// ─── LLM Configuration ────────────────────────────────────────────────────────
+
+model TenantLLMConfig {
+  id               String      @id @default(cuid())
+  tenantId         String
+  provider         LLMProvider
+  modelName        String
+  apiKeyRef        String
+  temperature      Float       @default(0.7)
+  topP             Float       @default(1.0)
+  maxTokens        Int         @default(4096)
+  isDefault        Boolean     @default(false)
+  fallbackOrder    Int         @default(0)
+  isActive         Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  tenant           Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, isDefault])
+}
+
+// ─── Agent ────────────────────────────────────────────────────────────────────
+
+model Agent {
+  id                    String      @id @default(cuid())
+  tenantId              String
+  name                  String
+  description           String?
+  systemPrompt          String      @db.Text
+  status                AgentStatus @default(DRAFT)
+  version               Int         @default(1)
+  widgetTheme           Json        @default("{\"primaryColor\":\"#6366f1\",\"fontFamily\":\"Inter\",\"borderRadius\":\"8px\",\"darkMode\":false}")
+  allowedOrigins        String[]    @default([])
+  embedToken            String      @unique @default(cuid())
+  maxSteps              Int         @default(10)
+  responseTimeoutMs     Int         @default(30000)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  tenant                Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions              AgentSession[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([embedToken])
+}
+
+// ─── Tool Registry ────────────────────────────────────────────────────────────
+
+model ToolRegistry {
+  id              String            @id @default(cuid())
+  tenantId        String
+  name            String
+  description     String
+  executionType   ToolExecutionType
+  jsonSchema      Json
+  webhookUrl      String?
+  webhookHeaders  Json?
+  executionCode   String?           @db.Text
+  timeoutMs       Int               @default(10000)
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+}
+
+// ─── Compliance Profile ───────────────────────────────────────────────────────
+
+model ComplianceProfile {
+  id                  String          @id @default(cuid())
+  tenantId            String          @unique
+  hipaaEnabled        Boolean         @default(false)
+  gdprEnabled         Boolean         @default(false)
+  pciEnabled          Boolean         @default(false)
+  maskingStrategy     MaskingStrategy @default(ANONYMIZE)
+  customBlocklist     String[]        @default([])
+  customRegexPatterns Json            @default("[]")
+  retentionDays       Int             @default(90)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  tenant              Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ─── Agent Session & Event Log ───────────────────────────────────────────────
+
+model AgentSession {
+  id                    String        @id @default(cuid())
+  tenantId              String
+  agentId               String
+  externalUserId        String?
+  status                SessionStatus @default(ACTIVE)
+  traceId               String        @unique @default(cuid())
+  spanId                String        @default(cuid())
+  totalPromptTokens     BigInt        @default(0)
+  totalCompletionTokens BigInt        @default(0)
+  totalToolCalls        Int           @default(0)
+  durationMs            Int?
+  metadata              Json?
+  startedAt             DateTime      @default(now())
+  completedAt           DateTime?
+  createdAt             DateTime      @default(now())
+
+  tenant                Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  agent                 Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  events                EventLog[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, agentId])
+  @@index([traceId])
+}
+
+model EventLog {
+  id              String       @id @default(cuid())
+  tenantId        String
+  sessionId       String
+  eventType       EventType
+  scrubbedContent String?      @db.Text
+  rawContent      String?      @db.Text
+  tokenCount      Int?
+  durationMs      Int?
+  toolName        String?
+  metadata        Json?
+  createdAt       DateTime     @default(now())
+
+  session         AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([sessionId])
+  @@index([tenantId, eventType])
+}
+
+// ─── Billing / Usage ──────────────────────────────────────────────────────────
+
+model UsageRecord {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  stripeUsageRecordId String?
+  billingPeriodStart  DateTime
+  billingPeriodEnd    DateTime
+  promptTokens        BigInt   @default(0)
+  completionTokens    BigInt   @default(0)
+  toolInvocations     Int      @default(0)
+  totalCostCents      Int      @default(0)
+  reportedToStripe    Boolean  @default(false)
+  reportedAt          DateTime?
+  createdAt           DateTime @default(now())
+
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, billingPeriodStart])
+}
